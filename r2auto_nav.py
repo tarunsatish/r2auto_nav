@@ -24,6 +24,56 @@ import math
 import cmath
 import time
 
+#installing packages for sensor https://github.com/adafruit/Adafruit_CircuitPython_AMG88xx
+import busio
+import board
+import adafruit_amg88xx
+import time
+from time import sleep
+import RPi.GPIO as GPIO
+
+#set up pins for DC motor
+DC_EN=24
+GPIO.setup(DC_EN, GPIO.OUT)
+GPIO.setup(DC_IN1, GPIO.OUT)
+
+#set up pins for stepper motor
+DIR = 16
+STEP = 12
+EN=25
+CW = 1     # Clockwise Rotation
+CCW = 0    # Counterclockwise Rotation
+SPR = 48   # Steps per Revolution (360 / 7.5)
+MODE = (14, 15, 18)   # Microstep Resolution GPIO Pins
+GPIO.setup(MODE, GPIO.OUT)
+RESOLUTION = {'Full': (0, 0, 0),
+              'Half': (1, 0, 0),
+              '1/4': (0, 1, 0),
+              '1/8': (1, 1, 0),
+              '1/16': (0, 0, 1),
+              '1/32': (1, 0, 1)}
+GPIO.output(MODE, RESOLUTION['1/32'])#smaller steps
+step_count = SPR * 32
+delay = .0208 / 32
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(DIR, GPIO.OUT)
+GPIO.setup(STEP, GPIO.OUT)
+GPIO.setup(EN, GPIO.OUT)
+GPIO.output(DIR, CW)
+
+#initilize I2C bus
+i2c_bus = busio.I2C(board.SCL, board.SDA)
+MINTEMP = 26.
+MAXTEMP = 32.
+threshold=40
+distance=400
+min_diff=10
+
+#initialize the sensor
+sensor = adafruit_amg88xx.AMG88XX(i2c_bus)
+grid=sensor.pixels
+
+
 # constants
 rotatechange = 0.1
 speedchange = 0.05
@@ -258,12 +308,56 @@ class AutoNav(Node):
             # stop moving
             self.stopbot()
 
-
+    #when target not found or fired already, move, else stop to fire
+    def firing(self):
+        target_found=0
+        fired=0
+        while target_found==0:
+            if self.aim_x()==0:
+                self.mover()
+            else:
+                self.stop_bot()
+                if self.aim_y()==0:
+                    GPIO.output(EN, GPIO.LOW)
+                    GPIO.output(STEP, GPIO.HIGH)
+                    sleep(delay)
+                    GPIO.output(STEP, GPIO.LOW)
+                    sleep(delay)
+                else:
+                    GPIO.output(EN, GPIO.HIGH)
+                    GPIO.output(STEP, GPIO.LOW)
+                    target_found=1
+        if(targer_found==1):
+            GPIO.output(DC_EN, GPIO.HIGH)
+            sleep(5)
+            GPIO.output(DC_EN, GPIO.LOW)
+            fired=1
+        if(fired==1) self.mover()
+        GPIO.cleanup()
+    
+    #check if aimed in x axis
+    def aim_x(self):
+        x_flag=0
+        if x_flag==0:
+            for i in range(8):
+                if(grid[i][3]>threshold and grid[i][4]>threshold and abs(grid[i][3]-grid[i][4])<min_diff):
+                    x_flag=1
+        return x_flag
+    
+    #check if aimed in y axis
+    def aim_y(self):
+        y_flag=0
+        if(abs(grid[3][3]-grid[3][4])<min_diff and abs(grid[4][3]-grid[4][4])<min_diff and abs(grid[3][3]-grid[4][4])<min_diff and abs(grid[3][4]-grid[4][3])<min_diff):
+            if(grid[3][3]>threshold and grid[3][4]>threshold and grid[4][3]>threshold and grid[4][4]>threshold):
+                y_flag=1
+        return y_flag
+    
+    
 def main(args=None):
     rclpy.init(args=args)
 
     auto_nav = AutoNav()
-    auto_nav.mover()
+    auto_nav.firing()
 
     # create matplotlib figure
     # plt.ion()
